@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>trace</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; background:#000; color:#eee; font-family:-apple-system,Menlo,monospace; height:100%; }
+  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #app { display:flex; flex-direction:column; height:100vh; }
+  header { display:flex; justify-content:space-between; align-items:center; padding:14px 16px 8px; border-bottom:1px solid #222; }
+  header h1 { font-size:15px; letter-spacing:2px; text-transform:uppercase; color:#888; font-weight:400; margin:0; }
+  nav { display:flex; gap:0; border-bottom:1px solid #222; }
+  nav button { flex:1; background:none; border:none; color:#666; padding:12px 0; font-size:12px; letter-spacing:1px; text-transform:uppercase; font-family:inherit; }
+  nav button.active { color:#fff; border-bottom:2px solid #fff; }
+  .view { flex:1; overflow-y:auto; display:none; padding:16px; }
+  .view.active { display:block; }
+
+  /* LOG VIEW */
+  #logBtn { width:100%; padding:28px 0; font-size:18px; letter-spacing:1px; text-transform:uppercase; background:#fff; color:#000; border:none; border-radius:14px; font-family:inherit; }
+  #logBtn:active { background:#ccc; }
+  #status { text-align:center; color:#666; font-size:13px; margin-top:14px; min-height:18px; }
+  textarea { width:100%; background:#111; color:#eee; border:1px solid #333; border-radius:10px; padding:12px; font-family:inherit; font-size:14px; margin-top:20px; resize:vertical; min-height:70px; }
+  .mediaRow { display:flex; gap:10px; margin-top:12px; }
+  .mediaRow button { flex:1; background:#111; color:#ccc; border:1px solid #333; border-radius:10px; padding:12px 0; font-size:13px; font-family:inherit; }
+  #mediaPreview { margin-top:12px; }
+  #mediaPreview img, #mediaPreview video { max-width:100%; border-radius:10px; }
+  .toggleRow { display:flex; justify-content:space-between; align-items:center; margin-top:26px; padding-top:18px; border-top:1px solid #222; }
+  .toggleRow span { font-size:13px; color:#aaa; }
+  .switch { width:46px; height:26px; background:#333; border-radius:13px; position:relative; border:none; }
+  .switch.on { background:#4CAF50; }
+  .switch::after { content:''; position:absolute; width:22px; height:22px; background:#fff; border-radius:50%; top:2px; left:2px; transition:left .15s; }
+  .switch.on::after { left:22px; }
+
+  /* HISTORY VIEW */
+  .entry { border-bottom:1px solid #1a1a1a; padding:14px 0; }
+  .entry .ts { color:#666; font-size:11px; letter-spacing:.5px; }
+  .entry .note { color:#eee; font-size:14px; margin-top:4px; }
+  .entry .coords { color:#555; font-size:11px; margin-top:4px; }
+  .entry img, .entry video { max-width:100%; border-radius:8px; margin-top:8px; }
+  .entry .del { color:#833; font-size:11px; margin-top:6px; background:none; border:none; padding:0; font-family:inherit; }
+  #historyList:empty::after { content:'No entries yet.'; color:#555; }
+
+  /* MAP VIEW */
+  .rangeRow { display:flex; gap:8px; margin-bottom:10px; }
+  .rangeRow input { flex:1; background:#111; color:#eee; border:1px solid #333; border-radius:8px; padding:8px; font-family:inherit; font-size:12px; }
+  #mapLoadBtn { width:100%; background:#111; color:#ccc; border:1px solid #333; border-radius:10px; padding:10px 0; font-size:13px; font-family:inherit; margin-bottom:10px; }
+  #map { height:52vh; border-radius:10px; background:#111; }
+  .scrubRow { margin-top:12px; }
+  #scrub { width:100%; }
+  #scrubLabel { text-align:center; color:#888; font-size:12px; margin-top:4px; }
+  #popupNote { color:#000; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background:#111; color:#eee; }
+  .leaflet-popup-content { color:#eee; font-size:12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header><h1>trace</h1><span id="count" style="color:#444;font-size:11px;"></span></header>
+  <nav>
+    <button class="tab active" data-view="log">Log</button>
+    <button class="tab" data-view="history">History</button>
+    <button class="tab" data-view="map">Playback</button>
+  </nav>
+
+  <div class="view active" id="view-log">
+    <button id="logBtn">Log Location</button>
+    <div id="status"></div>
+    <textarea id="noteInput" placeholder="Add a note (optional)"></textarea>
+    <div class="mediaRow">
+      <button id="photoBtn">📷 Photo</button>
+      <button id="videoBtn">🎥 Video</button>
+    </div>
+    <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+    <input type="file" id="videoInput" accept="video/*" capture="environment" style="display:none">
+    <div id="mediaPreview"></div>
+    <div class="toggleRow">
+      <span>Auto-track route (while app is open)</span>
+      <button id="autoToggle" class="switch"></button>
+    </div>
+  </div>
+
+  <div class="view" id="view-history">
+    <div id="historyList"></div>
+  </div>
+
+  <div class="view" id="view-map">
+    <div class="rangeRow">
+      <input type="date" id="dateFrom">
+      <input type="date" id="dateTo">
+    </div>
+    <button id="mapLoadBtn">Load Range</button>
+    <div id="map"></div>
+    <div class="scrubRow">
+      <input type="range" id="scrub" min="0" max="0" value="0" disabled>
+      <div id="scrubLabel">—</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+// ---------- IndexedDB ----------
+let db;
+const dbReq = indexedDB.open('traceDB', 1);
+dbReq.onupgradeneeded = e => {
+  const d = e.target.result;
+  const store = d.createObjectStore('entries', { keyPath:'id', autoIncrement:true });
+  store.createIndex('ts', 'ts');
+};
+dbReq.onsuccess = e => { db = e.target.result; refreshHistory(); refreshCount(); };
+
+function addEntry(entry) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction('entries','readwrite');
+    const r = tx.objectStore('entries').add(entry);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+function getAllEntries() {
+  return new Promise((res) => {
+    const tx = db.transaction('entries','readonly');
+    const r = tx.objectStore('entries').getAll();
+    r.onsuccess = () => res(r.result.sort((a,b)=>b.ts-a.ts));
+  });
+}
+function deleteEntry(id) {
+  return new Promise((res) => {
+    const tx = db.transaction('entries','readwrite');
+    tx.objectStore('entries').delete(id);
+    tx.oncomplete = () => res();
+  });
+}
+async function refreshCount() {
+  const all = await getAllEntries();
+  document.getElementById('count').textContent = all.length + ' pts';
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('view-'+btn.dataset.view).classList.add('active');
+    if (btn.dataset.view === 'history') refreshHistory();
+    if (btn.dataset.view === 'map') setTimeout(()=>{ if(map) map.invalidateSize(); },100);
+  };
+});
+
+// ---------- Log ----------
+let pendingMedia = null; // {blob, type}
+const statusEl = document.getElementById('status');
+
+document.getElementById('photoBtn').onclick = () => document.getElementById('photoInput').click();
+document.getElementById('videoBtn').onclick = () => document.getElementById('videoInput').click();
+document.getElementById('photoInput').onchange = e => handleMedia(e.target.files[0], 'image');
+document.getElementById('videoInput').onchange = e => handleMedia(e.target.files[0], 'video');
+
+function handleMedia(file, type) {
+  if (!file) return;
+  pendingMedia = { blob: file, type };
+  const url = URL.createObjectURL(file);
+  document.getElementById('mediaPreview').innerHTML = type === 'image'
+    ? `<img src="${url}">` : `<video src="${url}" controls></video>`;
+}
+
+document.getElementById('logBtn').onclick = () => {
+  statusEl.textContent = 'Locating…';
+  navigator.geolocation.getCurrentPosition(async pos => {
+    const entry = {
+      ts: Date.now(),
+      lat: pos.coords.latitude,
+      lon: pos.coords.longitude,
+      accuracy: pos.coords.accuracy,
+      note: document.getElementById('noteInput').value.trim(),
+      mediaBlob: pendingMedia ? pendingMedia.blob : null,
+      mediaType: pendingMedia ? pendingMedia.type : null,
+      isAuto: false
+    };
+    await addEntry(entry);
+    statusEl.textContent = `Logged ✓ ${entry.lat.toFixed(5)}, ${entry.lon.toFixed(5)}`;
+    document.getElementById('noteInput').value = '';
+    document.getElementById('mediaPreview').innerHTML = '';
+    pendingMedia = null;
+    refreshCount();
+  }, err => {
+    statusEl.textContent = 'Location error: ' + err.message;
+  }, { enableHighAccuracy:true, timeout:15000 });
+};
+
+// ---------- Auto-track ----------
+let watchId = null, lastAutoPoint = null;
+const autoToggle = document.getElementById('autoToggle');
+autoToggle.onclick = () => {
+  if (watchId === null) {
+    watchId = navigator.geolocation.watchPosition(pos => {
+      const now = Date.now();
+      const {latitude:lat, longitude:lon, accuracy} = pos.coords;
+      const moved = !lastAutoPoint || haversine(lastAutoPoint.lat, lastAutoPoint.lon, lat, lon) > 50;
+      const timePassed = !lastAutoPoint || (now - lastAutoPoint.ts) > 120000;
+      if (moved || timePassed) {
+        addEntry({ ts:now, lat, lon, accuracy, note:'', mediaBlob:null, mediaType:null, isAuto:true });
+        lastAutoPoint = { ts: now, lat, lon };
+        refreshCount();
+      }
+    }, err => console.warn(err), { enableHighAccuracy:true });
+    autoToggle.classList.add('on');
+  } else {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    autoToggle.classList.remove('on');
+  }
+};
+
+function haversine(lat1,lon1,lat2,lon2) {
+  const R=6371000, toRad=d=>d*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+// ---------- History ----------
+async function refreshHistory() {
+  const all = await getAllEntries();
+  const list = document.getElementById('historyList');
+  list.innerHTML = '';
+  all.forEach(e => {
+    const div = document.createElement('div');
+    div.className = 'entry';
+    const d = new Date(e.ts);
+    let mediaHtml = '';
+    if (e.mediaBlob) {
+      const url = URL.createObjectURL(e.mediaBlob);
+      mediaHtml = e.mediaType === 'image' ? `<img src="${url}">` : `<video src="${url}" controls></video>`;
+    }
+    div.innerHTML = `
+      <div class="ts">${d.toLocaleString()} ${e.isAuto ? '· auto' : ''}</div>
+      ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
+      <div class="coords">${e.lat.toFixed(5)}, ${e.lon.toFixed(5)} (±${Math.round(e.accuracy)}m)</div>
+      ${mediaHtml}
+      <button class="del" data-id="${e.id}">delete</button>
+    `;
+    list.appendChild(div);
+  });
+  list.querySelectorAll('.del').forEach(btn => {
+    btn.onclick = async () => { await deleteEntry(parseInt(btn.dataset.id)); refreshHistory(); refreshCount(); };
+  });
+}
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ---------- Map / Playback ----------
+let map, routeLine, markers = [], rangeEntries = [];
+function initMap() {
+  map = L.map('map', { zoomControl:false, attributionControl:false }).setView([0,0], 2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    subdomains:'abcd', maxZoom:19
+  }).addTo(map);
+}
+window.addEventListener('load', initMap);
+
+document.getElementById('mapLoadBtn').onclick = async () => {
+  const from = document.getElementById('dateFrom').value;
+  const to = document.getElementById('dateTo').value;
+  const all = await getAllEntries();
+  const fromTs = from ? new Date(from+'T00:00:00').getTime() : 0;
+  const toTs = to ? new Date(to+'T23:59:59').getTime() : Infinity;
+  rangeEntries = all.filter(e => e.ts >= fromTs && e.ts <= toTs).sort((a,b)=>a.ts-b.ts);
+
+  markers.forEach(m=>map.removeLayer(m)); markers=[];
+  if (routeLine) map.removeLayer(routeLine);
+
+  if (rangeEntries.length === 0) {
+    document.getElementById('scrubLabel').textContent = 'No points in range';
+    document.getElementById('scrub').max = 0;
+    document.getElementById('scrub').disabled = true;
+    return;
+  }
+
+  const latlngs = rangeEntries.map(e => [e.lat, e.lon]);
+  routeLine = L.polyline(latlngs, { color:'#4CAF50', weight:3, opacity:0.8 }).addTo(map);
+  rangeEntries.forEach(e => {
+    const m = L.circleMarker([e.lat, e.lon], { radius: e.isAuto?3:6, color: e.isAuto?'#666':'#fff', fillColor: e.isAuto?'#666':'#4CAF50', fillOpacity:0.9 });
+    const d = new Date(e.ts);
+    m.bindPopup(`<b>${d.toLocaleString()}</b>${e.note ? '<br>'+escapeHtml(e.note) : ''}`);
+    m.addTo(map);
+    markers.push(m);
+  });
+  map.fitBounds(routeLine.getBounds(), { padding:[20,20] });
+
+  const scrub = document.getElementById('scrub');
+  scrub.max = rangeEntries.length - 1;
+  scrub.value = rangeEntries.length - 1;
+  scrub.disabled = false;
+  updateScrubLabel();
+};
+
+document.getElementById('scrub').oninput = updateScrubLabel;
+function updateScrubLabel() {
+  const idx = parseInt(document.getElementById('scrub').value);
+  if (!rangeEntries[idx]) return;
+  const e = rangeEntries[idx];
+  const d = new Date(e.ts);
+  document.getElementById('scrubLabel').textContent = d.toLocaleString() + (e.note ? ' — ' + e.note : '');
+  map.panTo([e.lat, e.lon]);
+  markers.forEach((m,i) => m.setStyle({ opacity: i<=idx?1:0.15, fillOpacity: i<=idx?0.9:0.1 }));
+}
+</script>
+</body>
+</html>
